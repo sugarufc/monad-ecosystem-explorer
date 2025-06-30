@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  monad-app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount only source code, not node_modules
+      - ./src:/app/src
+      - ./public:/app/public
+      - ./package.json:/app/package.json
+      - ./package-lock.json:/app/package-lock.json
+    environment:
+      - NODE_ENV=development
+    # Network isolation
+    networks:
+      - monad-network
+    # Resource limitations
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+
+networks:
+  monad-network:
+    driver: bridge 
