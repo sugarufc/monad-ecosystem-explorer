@@ -1,59 +1,176 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './SwapInterface.css';
+import { swapManager, swapUtils } from '../utils/swap';
+import { TOKENS, formatAddress } from '../utils/web3';
 
 const SwapInterface = ({ isConnected, walletAddress }) => {
   const [fromToken, setFromToken] = useState('MONAD');
-  const [toToken, setToToken] = useState('ETH');
+  const [toToken, setToToken] = useState('WETH');
   const [amount, setAmount] = useState('');
   const [estimatedAmount, setEstimatedAmount] = useState('0');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [tokenBalances, setTokenBalances] = useState({});
+  const [slippage, setSlippage] = useState(0.5);
+  const [isApprovalNeeded, setIsApprovalNeeded] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
 
-  const tokens = [
-    { symbol: 'MONAD', name: 'Monad', icon: '🚀' },
-    { symbol: 'ETH', name: 'Ethereum', icon: '🔷' },
-    { symbol: 'USDC', name: 'USD Coin', icon: '💵' },
-    { symbol: 'USDT', name: 'Tether', icon: '💲' }
-  ];
+  const tokens = Object.values(TOKENS);
 
-  const handleAmountChange = (e) => {
-    const value = e.target.value;
-    setAmount(value);
-    
-    // Simulate price calculation (in real app, this would call DEX API)
-    if (value && !isNaN(value)) {
-      const rate = 0.001; // Mock exchange rate
-      setEstimatedAmount((parseFloat(value) * rate).toFixed(6));
-    } else {
-      setEstimatedAmount('0');
+  // Загрузка балансов токенов
+  useEffect(() => {
+    if (isConnected && walletAddress) {
+      loadTokenBalances();
+    }
+  }, [isConnected, walletAddress]);
+
+  // Получение балансов токенов
+  const loadTokenBalances = async () => {
+    try {
+      const balances = await swapManager.getTokenBalances(walletAddress);
+      setTokenBalances(balances);
+    } catch (error) {
+      console.error('Ошибка загрузки балансов:', error);
     }
   };
 
-  const handleSwap = () => {
+  // Получение оценки свапа
+  const getSwapEstimate = async (fromTokenSymbol, toTokenSymbol, amount) => {
+    if (!amount || parseFloat(amount) <= 0) {
+      setEstimatedAmount('0');
+      return;
+    }
+
+    try {
+      const fromToken = TOKENS[fromTokenSymbol];
+      const toToken = TOKENS[toTokenSymbol];
+      
+      if (!fromToken || !toToken) {
+        setEstimatedAmount('0');
+        return;
+      }
+
+      const estimate = await swapManager.getSwapEstimate(fromToken, toToken, amount);
+      setEstimatedAmount(estimate.amountOut);
+      setError('');
+    } catch (error) {
+      console.error('Ошибка получения оценки:', error);
+      setEstimatedAmount('0');
+      setError('Не удалось получить оценку свапа');
+    }
+  };
+
+  const handleAmountChange = async (e) => {
+    const value = e.target.value;
+    setAmount(value);
+    setError('');
+    setSuccess('');
+    
+    if (value && !isNaN(value) && parseFloat(value) > 0) {
+      await getSwapEstimate(fromToken, toToken, value);
+      
+      // Проверяем необходимость approval
+      try {
+        const fromTokenObj = TOKENS[fromToken];
+        const needsApproval = await swapManager.checkApprovalNeeded(fromTokenObj, value);
+        setIsApprovalNeeded(needsApproval);
+      } catch (error) {
+        console.error('Ошибка проверки approval:', error);
+      }
+    } else {
+      setEstimatedAmount('0');
+      setIsApprovalNeeded(false);
+    }
+  };
+
+  // Выполнение approval
+  const handleApproval = async () => {
+    if (!isConnected || !amount) return;
+    
+    setIsApproving(true);
+    setError('');
+    
+    try {
+      const fromTokenObj = TOKENS[fromToken];
+      const result = await swapManager.executeApproval(fromTokenObj, amount);
+      
+      if (result.success) {
+        setSuccess('Токены утверждены успешно!');
+        setIsApprovalNeeded(false);
+        await loadTokenBalances(); // Обновляем балансы
+      }
+    } catch (error) {
+      console.error('Ошибка approval:', error);
+      setError(error.message || 'Ошибка утверждения токенов');
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  const handleSwap = async () => {
     if (!isConnected) {
-      alert('Please connect your wallet first!');
+      setError('Пожалуйста, подключите кошелек!');
       return;
     }
     
     if (!amount || parseFloat(amount) <= 0) {
-      alert('Please enter a valid amount!');
+      setError('Введите корректную сумму!');
       return;
     }
 
-    // This is a demo - no actual swap will be executed
-    alert('This is a demo interface. In a real application, this would execute a swap transaction on Monad network.');
+    // Валидация баланса
+    const balance = tokenBalances[fromToken]?.balance || '0';
+    const validation = swapUtils.validateSwapAmount(amount, balance);
+    if (!validation.valid) {
+      setError(validation.error);
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const fromTokenObj = TOKENS[fromToken];
+      const toTokenObj = TOKENS[toToken];
+      
+      const result = await swapManager.executeTokenSwap(fromTokenObj, toTokenObj, amount, slippage);
+      
+      if (result.success) {
+        setSuccess(`Свап выполнен успешно! Hash: ${formatAddress(result.transactionHash)}`);
+        setAmount('');
+        setEstimatedAmount('0');
+        await loadTokenBalances(); // Обновляем балансы
+      }
+    } catch (error) {
+      console.error('Ошибка свапа:', error);
+      setError(error.message || 'Ошибка выполнения свапа');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const switchTokens = () => {
+  const switchTokens = async () => {
     setFromToken(toToken);
     setToToken(fromToken);
     setAmount('');
     setEstimatedAmount('0');
+    setError('');
+    setSuccess('');
+    setIsApprovalNeeded(false);
+    
+    // Пересчитываем оценку если есть сумма
+    if (amount && parseFloat(amount) > 0) {
+      await getSwapEstimate(toToken, fromToken, amount);
+    }
   };
 
   return (
     <div className="swap-interface">
       <div className="swap-header">
-        <h3>🔄 Token Swap Interface</h3>
-        <p>Safe demo interface for Monad ecosystem</p>
+        <h3>🔄 Real Token Swap Interface</h3>
+        <p>Secure DEX integration for Monad ecosystem</p>
       </div>
 
       {!isConnected ? (
@@ -69,62 +186,77 @@ const SwapInterface = ({ isConnected, walletAddress }) => {
       ) : (
         <div className="swap-container">
           <div className="wallet-status">
-            <span>✅ Connected: {walletAddress?.slice(0, 6)}...{walletAddress?.slice(-4)}</span>
+            <span>✅ Connected: {formatAddress(walletAddress)}</span>
           </div>
 
-          <div className="swap-card">
-            <div className="swap-input">
-              <div className="input-header">
-                <span>From</span>
-                <span>Balance: 1000 MONAD</span>
-              </div>
-              <div className="input-container">
-                <input
-                  type="number"
-                  value={amount}
-                  onChange={handleAmountChange}
-                  placeholder="0.0"
-                  min="0"
-                  step="0.000001"
-                />
-                <div className="token-selector">
-                  <span className="token-icon">
-                    {tokens.find(t => t.symbol === fromToken)?.icon}
-                  </span>
-                  <span className="token-symbol">{fromToken}</span>
+          {/* Error and Success Messages */}
+          {error && (
+            <div className="error-message">
+              <span>❌ {error}</span>
+            </div>
+          )}
+          
+          {success && (
+            <div className="success-message">
+              <span>✅ {success}</span>
+            </div>
+          )}
+
+                      <div className="swap-card">
+              <div className="swap-input">
+                <div className="input-header">
+                  <span>From</span>
+                  <span>Balance: {tokenBalances[fromToken]?.balance || '0'} {fromToken}</span>
+                </div>
+                <div className="input-container">
+                  <input
+                    type="number"
+                    value={amount}
+                    onChange={handleAmountChange}
+                    placeholder="0.0"
+                    min="0"
+                    step="0.000001"
+                    disabled={isLoading}
+                  />
+                  <div className="token-selector">
+                    <span className="token-icon">
+                      {tokens.find(t => t.symbol === fromToken)?.icon}
+                    </span>
+                    <span className="token-symbol">{fromToken}</span>
+                  </div>
                 </div>
               </div>
-            </div>
 
             <div className="swap-arrow" onClick={switchTokens}>
               <span>↓</span>
             </div>
 
-            <div className="swap-input">
-              <div className="input-header">
-                <span>To</span>
-                <span>Balance: 0.5 ETH</span>
-              </div>
-              <div className="input-container">
-                <input
-                  type="number"
-                  value={estimatedAmount}
-                  readOnly
-                  placeholder="0.0"
-                />
-                <div className="token-selector">
-                  <span className="token-icon">
-                    {tokens.find(t => t.symbol === toToken)?.icon}
-                  </span>
-                  <span className="token-symbol">{toToken}</span>
+                          <div className="swap-input">
+                <div className="input-header">
+                  <span>To</span>
+                  <span>Balance: {tokenBalances[toToken]?.balance || '0'} {toToken}</span>
+                </div>
+                <div className="input-container">
+                  <input
+                    type="number"
+                    value={estimatedAmount}
+                    readOnly
+                    placeholder="0.0"
+                    disabled={isLoading}
+                  />
+                  <div className="token-selector">
+                    <span className="token-icon">
+                      {tokens.find(t => t.symbol === toToken)?.icon}
+                    </span>
+                    <span className="token-symbol">{toToken}</span>
+                  </div>
                 </div>
               </div>
-            </div>
 
             <div className="swap-info">
               <div className="info-row">
                 <span>Exchange Rate:</span>
-                <span>1 {fromToken} = 0.001 {toToken}</span>
+                <span>1 {fromToken} = {amount && estimatedAmount && parseFloat(amount) > 0 ? (parseFloat(estimatedAmount) / parseFloat(amount)).toFixed(6) : '0'} {toToken}</span>
               </div>
               <div className="info-row">
                 <span>Network Fee:</span>
@@ -132,21 +264,43 @@ const SwapInterface = ({ isConnected, walletAddress }) => {
               </div>
               <div className="info-row">
                 <span>Slippage:</span>
-                <span>0.5%</span>
+                <div className="slippage-control">
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="5"
+                    step="0.1"
+                    value={slippage}
+                    onChange={(e) => setSlippage(parseFloat(e.target.value))}
+                    disabled={isLoading}
+                  />
+                  <span>{slippage}%</span>
+                </div>
               </div>
             </div>
+
+            {/* Approval Button */}
+            {isApprovalNeeded && (
+              <button 
+                className="approval-button"
+                onClick={handleApproval}
+                disabled={isApproving || isLoading}
+              >
+                {isApproving ? 'Утверждение...' : `Утвердить ${fromToken}`}
+              </button>
+            )}
 
             <button 
               className="swap-button"
               onClick={handleSwap}
-              disabled={!amount || parseFloat(amount) <= 0}
+              disabled={!amount || parseFloat(amount) <= 0 || isLoading || isApprovalNeeded}
             >
-              Swap {fromToken} for {toToken}
+              {isLoading ? 'Выполнение свапа...' : `Swap ${fromToken} for ${toToken}`}
             </button>
 
             <div className="swap-disclaimer">
-              <p>⚠️ This is a demo interface. No actual transactions will be executed.</p>
-              <p>Real swaps would require proper DEX integration and transaction signing.</p>
+              <p>⚠️ Real DEX integration - transactions will be executed on Monad network.</p>
+              <p>Make sure you have sufficient balance and gas fees before swapping.</p>
             </div>
           </div>
 

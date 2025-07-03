@@ -13,7 +13,10 @@
     "dev": "docker-compose up --build",
     "stop": "docker-compose down",
     "lint": "eslint src/**/*.{js,jsx}",
-    "format": "prettier --write src/**/*.{js,jsx,css}"
+    "format": "prettier --write src/**/*.{js,jsx,css}",
+    "deploy": "./deploy-vercel.sh",
+    "deploy:vercel": "vercel --prod",
+    "deploy:netlify": "netlify deploy --prod"
   },
   "dependencies": {
     "react": "^18.2.0",
