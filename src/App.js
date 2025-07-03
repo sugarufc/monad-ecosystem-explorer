@@ -3,6 +3,7 @@ import './App.css';
 import WalletConnect from './components/WalletConnect';
 import MonadInfo from './components/MonadInfo';
 import SwapInterface from './components/SwapInterface';
+import PortfolioView from './components/PortfolioView';
 import ChatBot from './components/ChatBot';
 
 function App() {
@@ -43,6 +44,12 @@ function App() {
             📊 Network Info
           </button>
           <button 
+            className={`tab-button ${activeTab === 'portfolio' ? 'active' : ''}`}
+            onClick={() => setActiveTab('portfolio')}
+          >
+            💼 Portfolio
+          </button>
+          <button 
             className={`tab-button ${activeTab === 'swap' ? 'active' : ''}`}
             onClick={() => setActiveTab('swap')}
           >
@@ -58,6 +65,7 @@ function App() {
 
         <div className="tab-content">
           {activeTab === 'info' && <MonadInfo />}
+          {activeTab === 'portfolio' && <PortfolioView isConnected={isConnected} walletAddress={walletAddress} />}
           {activeTab === 'swap' && <SwapInterface isConnected={isConnected} walletAddress={walletAddress} />}
           {activeTab === 'chat' && <ChatBot />}
         </div>

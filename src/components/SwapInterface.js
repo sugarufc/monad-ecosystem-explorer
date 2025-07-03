@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './SwapInterface.css';
 import { swapManager, swapUtils } from '../utils/swap';
 import { TOKENS, formatAddress } from '../utils/web3';
+import { blockvisionAPI } from '../utils/blockvision';
 
 const SwapInterface = ({ isConnected, walletAddress }) => {
   const [fromToken, setFromToken] = useState('MONAD');
@@ -28,10 +29,36 @@ const SwapInterface = ({ isConnected, walletAddress }) => {
   // Получение балансов токенов
   const loadTokenBalances = async () => {
     try {
-      const balances = await swapManager.getTokenBalances(walletAddress);
-      setTokenBalances(balances);
+      // Пробуем получить данные из BlockVision API
+      if (process.env.REACT_APP_BLOCKVISION_API_KEY) {
+        const accountTokens = await blockvisionAPI.getAccountTokens(walletAddress);
+        const realBalances = {};
+        
+        if (accountTokens.data) {
+          accountTokens.data.forEach(token => {
+            realBalances[token.symbol] = {
+              symbol: token.symbol,
+              balance: blockvisionAPI.formatTokenBalance(token.balance, token.decimals),
+              decimals: token.decimals,
+              icon: token.symbol === 'MONAD' ? '🚀' : 
+                    token.symbol === 'WETH' ? '🔷' : 
+                    token.symbol === 'USDC' ? '💵' : '💲',
+              usdValue: token.usdValue
+            };
+          });
+        }
+        
+        setTokenBalances(realBalances);
+      } else {
+        // Fallback на демо данные
+        const balances = await swapManager.getTokenBalances(walletAddress);
+        setTokenBalances(balances);
+      }
     } catch (error) {
       console.error('Ошибка загрузки балансов:', error);
+      // Fallback на демо данные при ошибке
+      const balances = await swapManager.getTokenBalances(walletAddress);
+      setTokenBalances(balances);
     }
   };
 
